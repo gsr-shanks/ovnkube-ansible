@@ -1,0 +1,83 @@
+- name: Create openshift-nmstate Namespace
+  kubernetes.core.k8s:
+    api_version: v1
+    kind: Namespace
+    name: openshift-nmstate
+    state: present
+    definition:
+      metadata:
+        labels:
+          kubernetes.io/metadata.name: openshift-nmstate
+          name: openshift-nmstate
+      spec:
+        finalizers:
+          - kubernetes
+
+- name: Create openshift-nmstate OperatorGroup
+  kubernetes.core.k8s:
+    api_version: operators.coreos.com/v1
+    kind: OperatorGroup
+    namespace: openshift-nmstate
+    name: openshift-nmstate
+    state: present
+    definition:
+      metadata:
+        annotations:
+          olm.providedAPIs: NMState.v1.nmstate.io
+        generateName: openshift-nmstate-
+        name: openshift-nmstate
+      spec:
+        targetNamespaces:
+          - openshift-nmstate
+
+- name: Create Subscription for kubernetes-nmstate-operator
+  kubernetes.core.k8s:
+    api_version: operators.coreos.com/v1alpha1
+    kind: Subscription
+    namespace: openshift-nmstate
+    name: kubernetes-nmstate-operator
+    state: present
+    definition:
+      metadata:
+        name: kubernetes-nmstate-operator
+        labels:
+          operators.coreos.com/kubernetes-nmstate-operator.openshift-nmstate: ""
+      spec:
+        channel: stable
+        installPlanApproval: Automatic
+        name: kubernetes-nmstate-operator
+        source: "{{ subscription_source }}"
+        sourceNamespace: openshift-marketplace
+
+- name: Wait for CSV to be in Succeeded state
+  kubernetes.core.k8s_info:
+    api_version: operators.coreos.com/v1alpha1
+    kind: ClusterServiceVersion
+    namespace: openshift-nmstate
+  register: csv_status
+  until: >
+    csv_status.resources | selectattr('status.phase', 'equalto', 'Succeeded') | list | length > 0
+  retries: 30
+  delay: 10
+
+- name: Wait for nmstate pods to be created
+  kubernetes.core.k8s_info:
+    api_version: v1
+    kind: Pod
+    namespace: openshift-nmstate
+  register: pod_status
+  until: pod_status.resources | length > 0
+  retries: 30
+  delay: 10
+
+- name: Create NMState Instance
+  kubernetes.core.k8s:
+    api_version: nmstate.io/v1
+    kind: NMState
+    namespace: openshift-nmstate
+    name: nmstate
+    state: present
+    definition:
+      metadata:
+        name: nmstate
+      spec: { }
