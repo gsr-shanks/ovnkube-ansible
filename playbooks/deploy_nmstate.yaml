@@ -2,4 +2,5 @@
   hosts: localhost
   gather_facts: no
   roles:
-    - operators
+    - role: nmstate
+      tasks_from: install_nmstate_operator

@@ -1,51 +1,41 @@
-- name: Create openshift-nmstate Namespace
+- name: Create metallb-system Namespace
   kubernetes.core.k8s:
     api_version: v1
     kind: Namespace
-    name: openshift-nmstate
+    name: metallb-system
     state: present
     definition:
       metadata:
         labels:
-          kubernetes.io/metadata.name: openshift-nmstate
-          name: openshift-nmstate
-      spec:
-        finalizers:
-          - kubernetes
+          name: metallb-system
 
-- name: Create openshift-nmstate OperatorGroup
+- name: Create metallb-operator OperatorGroup
   kubernetes.core.k8s:
     api_version: operators.coreos.com/v1
     kind: OperatorGroup
-    namespace: openshift-nmstate
-    name: openshift-nmstate
+    namespace: metallb-system
+    name: metallb-operator
     state: present
     definition:
       metadata:
-        annotations:
-          olm.providedAPIs: NMState.v1.nmstate.io
-        generateName: openshift-nmstate-
-        name: openshift-nmstate
-      spec:
-        targetNamespaces:
-          - openshift-nmstate
+        name: metallb-operator
+        namespace: metallb-system
 
-- name: Create Subscription for kubernetes-nmstate-operator
+- name: Create Subscription for metallb-operator
   kubernetes.core.k8s:
     api_version: operators.coreos.com/v1alpha1
     kind: Subscription
-    namespace: openshift-nmstate
-    name: kubernetes-nmstate-operator
+    namespace: metallb-system
+    name: metallb-operator-sub
     state: present
     definition:
       metadata:
-        name: kubernetes-nmstate-operator
-        labels:
-          operators.coreos.com/kubernetes-nmstate-operator.openshift-nmstate: ""
+        name: metallb-operator-sub
+        namespace: metallb-system
       spec:
         channel: stable
         installPlanApproval: Automatic
-        name: kubernetes-nmstate-operator
+        name: metallb-operator
         source: "{{ subscription_source }}"
         sourceNamespace: openshift-marketplace
 
@@ -53,31 +43,32 @@
   kubernetes.core.k8s_info:
     api_version: operators.coreos.com/v1alpha1
     kind: ClusterServiceVersion
-    namespace: openshift-nmstate
+    namespace: metallb-system
   register: csv_status
   until: >
     csv_status.resources | selectattr('status.phase', 'equalto', 'Succeeded') | list | length > 0
   retries: 30
   delay: 10
 
-- name: Wait for nmstate pods to be created
+- name: Wait for metallb pod to be created
   kubernetes.core.k8s_info:
     api_version: v1
     kind: Pod
-    namespace: openshift-nmstate
+    namespace: metallb-system
   register: pod_status
   until: pod_status.resources | length > 0
   retries: 30
   delay: 10
 
-- name: Create NMState Instance
+- name: Create MetalLB Instance
   kubernetes.core.k8s:
-    api_version: nmstate.io/v1
-    kind: NMState
-    namespace: openshift-nmstate
+    api_version: metallb.io/v1beta1
+    kind: MetalLB
+    namespace: metallb-system
     name: nmstate
     state: present
     definition:
       metadata:
-        name: nmstate
+        name: metallb
+        namespace: metallb-system
       spec: { }

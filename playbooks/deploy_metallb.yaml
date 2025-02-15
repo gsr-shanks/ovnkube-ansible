@@ -1,0 +1,6 @@
+- name: Deploy MetalLB on OpenShift
+  hosts: localhost
+  gather_facts: no
+  roles:
+    - role: metallb
+      tasks_from: install_metallb_operator
