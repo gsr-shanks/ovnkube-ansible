@@ -1,1 +1,4 @@
-subscription_source: # add registry
+subscription_source:
+custom_catalog:
+custom_catalog_image:
+my_company:

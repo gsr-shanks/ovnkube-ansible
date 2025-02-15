@@ -1,0 +1,17 @@
+- name: Create CatalogSource for Operator Lifecycle Manager
+  kubernetes.core.k8s:
+    api_version: operators.coreos.com/v1alpha1
+    kind: CatalogSource
+    state: present
+    definition:
+      metadata:
+        name: "{{ custom_catalog }}"
+        namespace: openshift-marketplace
+      spec:
+        sourceType: grpc
+        image: "{{ custom_catalog_image }}"
+        displayName: Production Operators
+        publisher: "{{ my_company }}"
+        updateStrategy:
+          registryPoll:
+            interval: 15m

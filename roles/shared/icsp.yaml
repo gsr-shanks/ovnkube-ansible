@@ -1,0 +1,19 @@
+- name: Create ImageContentSourcePolicy
+  kubernetes.core.k8s:
+    api_version: operator.openshift.io/v1alpha1
+    kind: ImageContentSourcePolicy
+    state: present
+    definition:
+      metadata:
+        name: icsp
+      spec:
+        repositoryDigestMirrors:
+          - source: registry.redhat.io
+            mirrors:
+              - brew.registry.redhat.io
+          - source: registry.stage.redhat.io
+            mirrors:
+              - brew.registry.redhat.io
+          - source: registry-proxy.engineering.redhat.com
+            mirrors:
+              - brew.registry.redhat.io
