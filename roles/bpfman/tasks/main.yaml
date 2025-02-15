@@ -1,0 +1,8 @@
+- name: Include shared ImageContentSourcePolicy tasks
+  import_tasks: ../../shared/icsp.yaml
+
+- name: Include shared CatalogSource tasks
+  import_tasks: ../../shared/catalogsource.yaml
+
+- name: Install eBPF Manager Operator
+  import_tasks: install_bpfman_operator.yaml

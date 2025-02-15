@@ -1,0 +1,6 @@
+- name: Deploy eBPF Manager (bpfman) on OpenShift
+  hosts: localhost
+  gather_facts: no
+  roles:
+    - role: bpfman
+      tasks_from: install_bpfman_operator
