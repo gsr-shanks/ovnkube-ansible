@@ -1,0 +1,30 @@
+- name: Download go-xdp-counter-install-selinux.yaml
+  ansible.builtin.get_url:
+    url: "https://github.com/bpfman/bpfman/releases/download/{{ bpfman_version }}/go-xdp-counter-install-selinux.yaml"
+    dest: "../roles/bpfman/go-xdp-counter-install-selinux.yaml"
+    mode: '0644'
+
+- name: Apply go-xdp-counter-install-selinux.yaml
+  ansible.builtin.command: oc create -f ./go-xdp-counter-install-selinux.yaml
+  args:
+    chdir: "../roles/bpfman"
+  register: result
+  changed_when: "'created' in result.stdout or 'configured' in result.stdout"
+
+- name: Wait for go-xdp-counter pod to be Running
+  ansible.builtin.command: >-
+    oc get pod -n go-xdp-counter -l app=go-xdp-counter -o jsonpath="{.items[0].status.phase}"
+  register: pod_status
+  until: pod_status.stdout == "Running"
+  retries: 30
+  delay: 10
+  changed_when: false
+
+- name: Wait for go-xdp-counter-example to reach ReconcileSuccess status
+  ansible.builtin.command: >-
+    oc get ip go-xdp-counter-example -n bpfman -o jsonpath="{.status.phase}"
+  register: ip_status
+  until: ip_status.stdout == "ReconcileSuccess"
+  retries: 30
+  delay: 10
+  changed_when: false

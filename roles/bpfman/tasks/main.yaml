@@ -6,3 +6,6 @@
 
 - name: Install eBPF Manager Operator
   import_tasks: install_bpfman_operator.yaml
+
+- name: Deploy eBPF program
+  import_tasks: deploy_ebpf-program.yaml

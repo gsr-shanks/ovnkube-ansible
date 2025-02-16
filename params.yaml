@@ -1,5 +1,11 @@
+# playbooks/secret_update
 pull_secret:
+
+# roles/shared
 subscription_source:
 custom_catalog:
 custom_catalog_image:
 my_company:
+
+# roles/bpfman
+bpfman_version:
