@@ -1,0 +1,55 @@
+---
+- name: Expand pod network through hostPrefix
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Retrieve node-subnets annotation for all nodes
+      shell: |
+        oc get nodes -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.metadata.annotations.k8s\.ovn\.org/node-subnets}{"\n"}'
+      register: node_subnets
+      changed_when: false
+
+    - name: Extract third octet and CIDR block
+      vars:
+        subnet_details: "{{ node_subnets.stdout_lines | map('regex_replace', '.*\"default\":\\[\"([0-9]+)\\.([0-9]+)\\.([0-9]+)\\.[0-9]+/([0-9]+)\"\\].*', '\\3/\\4') | list }}"
+        filtered_subnet_details: "{{ subnet_details | select('search', '^[0-9]+/[0-9]+$') | list }}"
+        third_octets: "{{ filtered_subnet_details | map('split', '/') | map('first') | unique }}"
+        cidr_blocks: "{{ filtered_subnet_details | map('split', '/') | map('last') | unique }}"
+      register: filtered_subnet_details
+      fail:
+        msg: "Nodes have different third octets or CIDR blocks: {{ filtered_subnet_details | unique }}"
+      when: third_octets | length > 1 or cidr_blocks | length > 1
+
+    - name: Display validation success
+      debug:
+        msg: "All nodes have the same third octet and CIDR block: {{ filtered_subnet_details | unique | first }}"
+
+    - name: Include shared role task for verifying OVN-Kubernetes CNI
+      ansible.builtin.include_role:
+        name: shared
+        tasks_from: verify_ovnk_cni
+
+    - name: Include cluster network role to expand hostprefix
+      ansible.builtin.include_role:
+        name: cluster_network
+        tasks_from: expand_hostprefix
+
+    - name: Include shared role task to check cluster health and network status
+      ansible.builtin.include_role:
+        name: shared
+        tasks_from: cluster_health
+
+    - name: Patch Network Operator to reset migration
+      shell: |
+        oc patch Network.operator.openshift.io cluster --type='merge' --patch '{ "spec": { "migration": null } }'
+      register: patch_result
+      changed_when: "'patched' in patch_result.stdout"
+
+    - name: Show patch result
+      debug:
+        var: patch_result.stdout
+
+    - name: Include shared role task to check cluster operator status
+      ansible.builtin.include_role:
+        name: shared
+        tasks_from: degraded_cluster_operators

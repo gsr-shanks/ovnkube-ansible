@@ -1,0 +1,155 @@
+- name: Get current CIDR and hostPrefix
+  shell: |
+    oc get network.config.openshift.io cluster -o jsonpath='{.spec.clusterNetwork[0].cidr} {.spec.clusterNetwork[0].hostPrefix}'
+  register: network_config
+  changed_when: false
+
+- name: Extract CIDR and hostPrefix
+  set_fact:
+    current_cidr: "{{ network_config.stdout.split()[0] }}"
+    current_hostPrefix: "{{ network_config.stdout.split()[1] | int }}"
+
+- name: Show current CIDR and hostPrefix
+  debug:
+    msg: "CIDR: {{ current_cidr }}, HostPrefix: {{ current_hostPrefix }}"
+
+- name: Define new hostPrefix value
+  set_fact:
+    new_hostPrefix: "{{ new_hostPrefix | int }}"
+
+- name: Debug values
+  debug:
+    msg: "Current HostPrefix: {{ current_hostPrefix }},
+          New HostPrefix: {{ new_hostPrefix }}"
+
+- name: Fail if new_hostPrefix is greater than current
+  fail:
+    msg: "New hostPrefix ({{ new_hostPrefix }}) is smaller than the current one ({{ current_hostPrefix }}). Exiting!"
+  when: new_hostPrefix | int > current_hostPrefix | int
+
+- name: Fake CNI migration to bypass 'cannot change ClusterNetwork' error
+  block:
+    - name: Patch the cluster network operator to 'null'
+      ansible.builtin.command: >
+        oc patch network.operator cluster --type=merge -p '{"spec": {"migration": null}}'
+      register: patch_result
+      changed_when: "'patched' in patch_result.stdout or 'configured' in patch_result.stdout"
+
+    - name: Patch the cluster network operator to fake openshiftSDN to OVNKubernetes
+      ansible.builtin.command: >
+        oc patch network.operator cluster --type=merge -p '{"spec": {"migration": {"networkType": "OVNKubernetes"}}}'
+      register: patch_result
+      changed_when: "'patched' in patch_result.stdout or 'configured' in patch_result.stdout"
+
+- name: Patch the cluster network operator to change an existing hostPrefix from {{ current_hostPrefix }} to {{ new_hostPrefix }}
+  ansible.builtin.command: >
+    oc patch Network.config.openshift.io cluster --type='merge' --patch
+    '{{ {"spec": {"clusterNetwork": [{"cidr": current_cidr, "hostPrefix": new_hostPrefix|int}]}} | to_json }}'
+  register: patch_result
+  changed_when: "'patched' in patch_result.stdout or 'configured' in patch_result.stdout"
+
+- name: Wait for multus daemonset to be successfully rolled out
+  command: oc -n openshift-multus rollout status daemonset/multus
+  register: rollout_status
+  retries: 30
+  delay: 10
+  until: "'successfully rolled out' in rollout_status.stdout"
+
+- name: Update node-subnets annotation on all nodes
+  block:
+    - name: Get list of master nodes
+      shell: oc get nodes --selector='node-role.kubernetes.io/master' -o jsonpath='{.items[*].metadata.name}'
+      register: master_nodes
+      changed_when: false
+
+    - name: Get list of worker nodes
+      shell: oc get nodes --selector='node-role.kubernetes.io/worker' -o jsonpath='{.items[*].metadata.name}'
+      register: worker_nodes
+      changed_when: false
+
+    - name: Update node-subnets annotation for master nodes
+      shell: |
+        existing_subnet=$(oc get node {{ item }} -o jsonpath='{.metadata.annotations.k8s\.ovn\.org/node-subnets}')
+        updated_subnet=$(echo "$existing_subnet" | jq '.default[0] |= sub("[0-9]+$"; "{{ new_hostPrefix }}")' | jq -c .)
+        oc patch node {{ item }} --type merge -p '{"metadata": {"annotations": {"k8s.ovn.org/node-subnets": '"$(echo "$updated_subnet" | jq -R .)"'}}}'
+        oc get node {{ item }} -o jsonpath='{range.items[*]} {.metadata.name} {"\t"} {.metadata.annotations.k8s\.ovn\.org/node-subnets} {"\n"}'
+      loop: "{{ master_nodes.stdout.split() }}"
+      when: master_nodes.stdout | length > 0
+      vars:
+        new_hostPrefix: "{{ new_hostPrefix }}"
+
+    - name: Update node-subnets annotation for worker nodes
+      shell: |
+        existing_subnet=$(oc get node {{ item }} -o jsonpath='{.metadata.annotations.k8s\.ovn\.org/node-subnets}')
+        updated_subnet=$(echo "$existing_subnet" | jq '.default[0] |= sub("[0-9]+$"; "{{ new_hostPrefix }}")' | jq -c .)
+        oc patch node {{ item }} --type merge -p '{"metadata": {"annotations": {"k8s.ovn.org/node-subnets": '"$(echo "$updated_subnet" | jq -R .)"'}}}'
+        oc get node {{ item }} -o jsonpath='{range.items[*]} {.metadata.name} {"\t"} {.metadata.annotations.k8s\.ovn\.org/node-subnets} {"\n"}'
+      loop: "{{ worker_nodes.stdout.split() }}"
+      when: worker_nodes.stdout | length > 0
+      vars:
+        new_hostPrefix: "{{ new_hostPrefix }}"
+
+    - name: Get list of all nodes
+      shell: oc get nodes -o jsonpath='{.items[*].metadata.name}'
+      register: all_nodes
+      changed_when: false
+
+    - name: Print node-subnets annotation for each node
+      shell: oc get node {{ item }} -o jsonpath='{.metadata.annotations.k8s\.ovn\.org/node-subnets}'
+      loop: "{{ all_nodes.stdout_lines }}"
+      register: node_subnets
+      changed_when: false
+
+    - name: Display node-subnets annotations
+      debug:
+        msg: "Node: {{ item.item }} → Subnets: {{ item.stdout }}"
+      loop: "{{ node_subnets.results }}"
+
+- name: Restart all related daemonset pods and ensure they are running
+  block:
+    - name: Define list of namespaces
+      set_fact:
+        namespaces:
+          - openshift-ovn-kubernetes
+          - openshift-multus
+          - openshift-dns
+          - openshift-network-diagnostics
+          - openshift-oauth-apiserver
+          - openshift-image-registry
+          - openshift-console
+          - openshift-monitoring
+          - openshift-operator-lifecycle-manager
+          - openshift-apiserver
+          - openshift-authentication
+          - openshift-cluster-node-tuning-operator
+
+    - name: Delete all pods in each namespace
+      shell: oc delete pod --all -n {{ item }}
+      loop: "{{ namespaces }}"
+      register: delete_pods
+      changed_when: "'No resources found' not in delete_pods.stdout"
+
+    - name: Wait for all pods in each namespace to be Running
+      shell: |
+        oc get pods -n {{ item }} --no-headers | awk '{print $3}' | grep -vE 'Running|Completed' || true
+      register: pod_status
+      retries: 30
+      delay: 10
+      until: pod_status.stdout == ""
+      loop: "{{ namespaces }}"
+
+    - name: Display pod restart confirmation
+      debug:
+        msg: "All pods in {{ item }} are running."
+      loop: "{{ namespaces }}"
+
+- name: Get all nodes --no-headers
+  shell: oc get nodes --no-headers -o custom-columns=":metadata.name"
+  register: all_nodes
+  changed_when: false
+
+- name: Process each node one by one
+  include_tasks: ../roles/shared/tasks/cordon_drain_uncordon.yaml
+  loop: "{{ all_nodes.stdout_lines }}"
+  loop_control:
+    loop_var: node

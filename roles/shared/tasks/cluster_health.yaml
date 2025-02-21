@@ -1,0 +1,52 @@
+- name: Retrieve node readiness status
+  shell: |
+    oc get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"|"}{.status.conditions[?(@.type=="Ready")].type}{"\n"}'
+  register: node_status
+  changed_when: false
+
+- name: Debug raw output
+  debug:
+    msg: "{{ node_status.stdout_lines }}"
+
+- name: Retrieve all cluster operators with their status
+  shell: |
+    oc get co -o jsonpath='{range .items[*]}{.metadata.name}{"|"}{.status.conditions[?(@.type=="Available")].status}{"|"}{.status.conditions[?(@.type=="Degraded")].status}{"|"}{.status.conditions[?(@.type=="Progressing")].status}{"|"}{.status.conditions[?(@.type=="Degraded")].message}{"\n"}'
+  register: cluster_operators
+  changed_when: false
+
+- name: Display degraded cluster operators with messages
+  debug:
+    msg: >-
+      ⚠️ Operator {{ item.split('|')[0] | default('N/A') }} is Degraded!
+      Message: {{ item.split('|')[4] | default('No message available') }}
+  loop: "{{ cluster_operators.stdout_lines | default([]) }}"
+  when: (item.split('|')[2] | default('False')) == 'True'
+
+- name: Verify rollout status of ovnkube-master
+  shell: oc -n openshift-ovn-kubernetes rollout status daemonset/ovnkube-node
+  register: ovnkube_status
+  changed_when: false
+
+- name: Display ovnkube rollout status
+  debug:
+    msg: "{{ ovnkube_status.stdout }}"
+
+- name: Retrieve updated network subnets for all nodes
+  shell: |
+    oc get nodes -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.metadata.annotations.k8s\.ovn\.org/node-subnets}{"\n"}'
+  register: node_subnets
+  changed_when: false
+
+- name: Display formatted node subnets
+  debug:
+    msg: "{{ node_subnets.stdout_lines }}"
+
+- name: Check for non-running pods
+  shell: oc get pod -o wide -A | grep -Ev 'Running|Completed' || true
+  register: non_running_pods
+  changed_when: false
+
+- name: Display non-running pods (if any)
+  debug:
+    msg: "{{ non_running_pods.stdout_lines }}"
+  when: non_running_pods.stdout | length > 0

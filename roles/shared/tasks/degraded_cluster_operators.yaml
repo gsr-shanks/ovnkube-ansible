@@ -1,0 +1,18 @@
+- name: Get all degraded cluster operators
+  shell: oc get co --no-headers | awk '$3=="True" {print $1}'
+  register: degraded_operators
+  changed_when: false
+
+- name: Find namespaces with pods related to degraded operators
+  shell: |
+    for op in {{ degraded_operators.stdout_lines | join(' ') }}; do
+      oc get pods -A --no-headers | grep "$op" | awk '{print $1}'
+    done | sort -u
+  register: degraded_namespaces
+  changed_when: false
+
+- name: Delete pods in degraded operator namespaces
+  shell: oc delete pods --all -n {{ item }}
+  loop: "{{ degraded_namespaces.stdout_lines }}"
+  when: item | length > 0
+  changed_when: true

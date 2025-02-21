@@ -1,0 +1,20 @@
+- name: Check if the current CNI is OVN-Kubernetes
+  ansible.builtin.command: >-
+    oc get network.operator cluster -o jsonpath="{.spec.defaultNetwork.type}"
+  register: cni_type
+  changed_when: false
+
+- name: Fail if unable to fetch CNI type
+  ansible.builtin.fail:
+    msg: "Failed to retrieve the current CNI type."
+  when: cni_type.stdout is not defined or cni_type.stdout == ""
+
+- name: Fail if the current CNI is not OVN-Kubernetes
+  ansible.builtin.fail:
+    msg: "The current CNI is {{ cni_type.stdout }}, but OVN-Kubernetes is required."
+  when: cni_type.stdout != "OVNKubernetes"
+
+- name: Debug current CNI is OVN-Kubernetes
+  ansible.builtin.debug:
+    msg: "The current CNI is {{ cni_type.stdout }}, as expected."
+  when: cni_type.stdout == "OVNKubernetes"

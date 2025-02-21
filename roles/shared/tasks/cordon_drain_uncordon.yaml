@@ -1,0 +1,23 @@
+- name: Cordon the node
+  shell: oc adm cordon {{ node }}
+  changed_when: true
+
+- name: Drain the node
+  shell: oc adm drain {{ node }} --force --delete-emptydir-data --ignore-daemonsets --disable-eviction
+  changed_when: true
+
+- name: Uncordon the node
+  shell: oc adm uncordon {{ node }}
+  changed_when: true
+
+- name: Wait for the node to be Ready again
+  shell: |
+    oc get node {{ node }} -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}'
+  register: node_status
+  retries: 30
+  delay: 10
+  until: node_status.stdout == "True"
+
+- name: Confirm node is Ready
+  debug:
+    msg: "Node {{ node }} is Ready."

@@ -9,3 +9,6 @@ my_company:
 
 # roles/bpfman
 bpfman_version:
+
+# roles/cluster_network
+new_hostPrefix:
