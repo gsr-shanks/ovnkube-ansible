@@ -1,0 +1,27 @@
+- name: Update OVS log level to {{ ovs_syslog_level }}
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Get the list of OpenShift nodes
+      shell: oc get nodes --no-headers -o custom-columns=":metadata.name"
+      register: node_list
+      changed_when: false
+
+    - name: Start debug pod, chroot, and update log level
+      shell: |
+        oc debug node/{{ item }} -- bash -c '
+          chroot /host bash -c "
+            sed -i ''s/syslog:info/syslog:{{ ovs_syslog_level }}/g'' /etc/systemd/system/ovs-vswitchd.service.d/10-ovs-vswitchd-restart.conf
+          "'
+      loop: "{{ node_list.stdout_lines }}"
+      register: debug_output
+      changed_when: "'syslog:info' in debug_output.stdout"
+
+    - name: Reload systemd and restart OVS if config changed
+      shell: |
+        oc debug node/{{ item }} -- bash -c '
+          chroot /host bash -c "
+            systemctl daemon-reload && systemctl restart ovs-vswitchd
+          "'
+      loop: "{{ node_list.stdout_lines }}"

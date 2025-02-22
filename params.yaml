@@ -12,3 +12,7 @@ bpfman_version:
 
 # roles/cluster_network
 new_hostPrefix:
+
+# playbooks/troubleshoot
+# Set the ovs syslog:<log_level> value. Log levels are off, emer, err, warn, info, or dbg
+ovs_syslog_level: dbg
