@@ -1,5 +1,5 @@
 - name: Get all degraded cluster operators
-  shell: oc get co --no-headers | awk '$3=="True" {print $1}'
+  shell: oc get co --no-headers | awk '$5=="True" {print $1}'
   register: degraded_operators
   changed_when: false
 
