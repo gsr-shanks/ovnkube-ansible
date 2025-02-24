@@ -1,0 +1,77 @@
+- name: Execute tasks using selected OpenShift node
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Get NodeInstallerProgressing status for kube-apiserver
+      shell: >
+        oc get kubeapiserver -o=jsonpath='{range .items[0].status.conditions[?(@.type=="NodeInstallerProgressing")]}{.reason}{"\n"}{.message}{"\n"}'
+      register: kubeapiserver_status
+      changed_when: false
+
+    - name: Ensure all nodes are at the latest revision
+      fail:
+        msg: "Not all nodes are at the latest revision! Status: {{ kubeapiserver_status.stdout }}"
+      when: "'AllNodesAtLatestRevision' not in kubeapiserver_status.stdout"
+
+    - name: Confirm all nodes are at the latest revision
+      debug:
+        msg: "All nodes are at the latest revision!"
+
+    - name: Retrieve list of OpenShift nodes
+      shell: "oc get nodes --no-headers -o custom-columns=':metadata.name'"
+      register: node_list
+      changed_when: false
+
+    - name: Prompt user to select a node
+      pause:
+        prompt: "Select a node from the list below and type it exactly as shown:\n\n{{ node_list.stdout_lines | join('\n') }}\n\n"
+      register: selected_node_input
+
+    - name: Validate user selection
+      fail:
+        msg: "Invalid node selected. Please run the playbook again."
+      when: selected_node_input.user_input not in node_list.stdout_lines
+
+    - name: Store selected node
+      set_fact:
+        selected_node: "{{ selected_node_input.user_input }}"
+        cacheable: true
+
+    - name: Display selected node
+      debug:
+        msg: "Proceeding with node: {{ selected_node }}"
+
+    - name: Start debug pod, chroot, and remove ovn*.db in "{{ selected_node }}"
+      shell: |
+        oc debug node/"{{ selected_node }}" -- bash -c 'rm -f /var/lib/ovn-ic/etc/ovn*.db'
+
+    - name: Restart ovs-vswitchd and ovsdb-server in "{{ selected_node }}"
+      shell: |
+        oc debug node/"{{ selected_node }}" -- bash -c 'chroot /host bash -c "systemctl restart ovs-vswitchd ovsdb-server"'
+
+    - name: Delete the ovnkube-controller pod on the node
+      command: >
+        oc -n openshift-ovn-kubernetes delete pod -l app=ovnkube-node --field-selector=spec.nodeName="{{ selected_node }}"
+      register: delete_pod_result
+      changed_when: "'deleted' in delete_pod_result.stdout"
+
+    - name: Display pod deletion output
+      debug:
+        msg: "{{ delete_pod_result.stdout }}"
+
+    - name: Wait for the pod to be recreated
+      pause:
+        seconds: 10
+
+    - name: Wait until the ovnkube-node pod is Running
+      shell: >
+        oc -n openshift-ovn-kubernetes get pod -l app=ovnkube-node --field-selector=spec.nodeName="{{ selected_node }}" -o jsonpath='{.items[0].status.phase}'
+      register: pod_status
+      until: pod_status.stdout == "Running"
+      retries: 30  # Retries for up to 5 minutes (30 attempts * 10s delay)
+      delay: 10
+      changed_when: false
+
+    - name: Display final pod status
+      debug:
+        msg: "Pod is now in Running state"
