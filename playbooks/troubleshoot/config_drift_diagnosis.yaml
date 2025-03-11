@@ -1,0 +1,60 @@
+- name: Check for Admin Network Policies (ANP & BANP) in system namespaces
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Check if ANP CRD exists in the system namespaces
+      shell: "oc get crd adminnetworkpolicies.policy.networking.k8s.io --no-headers"
+      register: anp_crd
+      changed_when: false
+      ignore_errors: true
+
+    - name: Check if BANP CRD exists in the system namespaces
+      shell: "oc get crd baselineadminnetworkpolicies.policy.networking.k8s.io --no-headers"
+      register: banp_crd
+      changed_when: false
+      ignore_errors: true
+
+    - name: Skip check if ANP and BANP CRDs do not exist in the system namespaces
+      meta: end_play
+      when: anp_crd.rc != 0 and banp_crd.rc != 0
+
+    - name: Get system namespaces
+      shell: >
+        oc get ns -o jsonpath='{.items[*].metadata.name}' |
+        tr ' ' '\n' | grep -E '^(default|kube-system|openshift-.*)$'
+      register: system_namespaces
+      changed_when: false
+
+    - name: Check for ANP in system namespaces
+      shell: >
+        oc get adminnetworkpolicy -A --no-headers |
+        awk '$1 ~ /^(default|test|kube-system|openshift-.*)$/ {print $1, $2}'
+      register: anp_found
+      changed_when: false
+      failed_when: anp_found.stdout != ""
+      when: anp_crd.rc == 0
+
+    - name: Check for BANP in system namespaces
+      shell: >
+        oc get baselineadminnetworkpolicy -A --no-headers |
+        awk '$1 ~ /^(default|test|kube-system|openshift-.*)$/ {print $1, $2}'
+      register: banp_found
+      changed_when: false
+      failed_when: banp_found.stdout != ""
+      when: banp_crd.rc == 0
+
+    - name: Pass if ANP are not found
+      debug:
+        msg: "✅ No ANP found in system namespaces!"
+      when: anp_found.stdout == ""
+
+    - name: Pass if BANP are not found
+      debug:
+        msg: "✅ No BANP found in system namespaces!"
+      when: banp_found.stdout == ""
+
+    - name: Fail if ANP or BANP exist in system namespaces
+      fail:
+        msg: "❌ ANP/BANP policies found in system namespaces:\nANP:\n{{ anp_found.stdout }}\nBANP:\n{{ banp_found.stdout }}"
+      when: anp_found.stdout != "" or banp_found.stdout != ""
