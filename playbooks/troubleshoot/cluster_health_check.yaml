@@ -1,0 +1,9 @@
+- name: Cluster health check
+  hosts: localhost
+  gather_facts: false
+
+  tasks:
+    - name: Include shared role task to check cluster health and network status
+      ansible.builtin.include_role:
+        name: shared
+        tasks_from: cluster_health
